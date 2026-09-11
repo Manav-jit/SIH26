@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+backend/venv/
+
+# Environment Variables
+.env
+
+# Build outputs
+dist/
+build/
+__pycache__/
+*.pyc
+
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Datasets and large binary files
+*.h5
+*.png
+*.jpg
+*.jpeg
+gamus_samples/
+images/
+dataset/
