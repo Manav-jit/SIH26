@@ -1,7 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import ThreeScene from './components/ThreeScene';
 import ErrorBoundary from './components/ErrorBoundary';
-import { UploadCloud, Layers, Activity, Maximize, Play, Square, Map } from 'lucide-react';
+import UploadZone from './components/UploadZone';
+import ToastContainer, { toast } from './components/Toast';
+import { 
+  Map, Activity, Play, Square, Maximize, 
+  Building2, TreePine, ArrowUpDown, Layers,
+  Camera, RotateCcw, Eye
+} from 'lucide-react';
 
 function App() {
   const [originalFile, setOriginalFile] = useState(null);
@@ -12,28 +18,41 @@ function App() {
   const [lod1Objects, setLod1Objects] = useState(null);
   
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState('');
   const [scale, setScale] = useState(100);
   const [isFlythrough, setIsFlythrough] = useState(false);
+  const [showGrid, setShowGrid] = useState(true);
 
-  const handleFileUpload = (e, type) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    if (type === 'image') {
-      setOriginalFile(file);
-      setRawDepth(null);
-      setLod1Objects(null);
-    } else if (type === 'class') {
-      setClassMapFile(file);
-    } else if (type === 'groundTruth') {
-      setGroundTruthFile(file);
-    }
-  };
+  // Compute statistics from lod1Objects
+  const stats = useMemo(() => {
+    if (!lod1Objects) return null;
+    const buildings = lod1Objects.filter(o => o.type === 'building');
+    const trees = lod1Objects.filter(o => o.type === 'tree');
+    const heights = buildings.map(b => b.height);
+    const maxH = heights.length > 0 ? Math.max(...heights) : 0;
+    const avgH = heights.length > 0 ? heights.reduce((a, b) => a + b, 0) / heights.length : 0;
+    return {
+      buildingCount: buildings.length,
+      treeCount: trees.length,
+      maxHeight: maxH.toFixed(1),
+      avgHeight: avgH.toFixed(1),
+      totalObjects: lod1Objects.length
+    };
+  }, [lod1Objects]);
+
+  // Step tracking
+  const currentStep = useMemo(() => {
+    if (lod1Objects || rawDepth) return 3;
+    if (originalFile && classMapFile) return 2;
+    if (originalFile) return 1;
+    return 0;
+  }, [originalFile, classMapFile, lod1Objects, rawDepth]);
 
   const generateDepth = async () => {
     if (!originalFile) return;
     
     setLoading(true);
+    setLoadingStep('Uploading images...');
     const formData = new FormData();
     formData.append('image', originalFile);
     if (classMapFile) {
@@ -44,6 +63,7 @@ function App() {
     }
 
     try {
+      setLoadingStep('Running AI depth estimation...');
       const response = await fetch('http://localhost:8000/predict', {
         method: 'POST',
         body: formData,
@@ -51,92 +71,272 @@ function App() {
       
       if (!response.ok) throw new Error('Failed to generate depth map');
       
+      setLoadingStep('Parsing 3D geometry...');
       const data = await response.json();
       setRawDepth(data.raw_depth);
       
       if (data.lod1_objects) {
+          setLoadingStep('Building 3D city...');
           setLod1Objects(data.lod1_objects);
+          toast.success(`City generated! ${data.lod1_objects.length} objects detected.`);
       } else {
           setLod1Objects(null);
+          toast.info('Depth map generated (no class map for LoD1).');
       }
       
     } catch (err) {
       console.error(err);
-      alert('Error generating 3D data. Ensure backend is running.');
+      toast.error('Error generating 3D data. Ensure backend is running.');
     } finally {
       setLoading(false);
+      setLoadingStep('');
     }
   };
 
+  const handleReset = () => {
+    setOriginalFile(null);
+    setClassMapFile(null);
+    setGroundTruthFile(null);
+    setRawDepth(null);
+    setLod1Objects(null);
+    setIsFlythrough(false);
+  };
+
   return (
-    <div className="h-screen w-screen bg-zinc-950 flex overflow-hidden text-zinc-100 font-sans">
-      <div className="w-80 bg-zinc-900 border-r border-zinc-800 flex flex-col p-6 overflow-y-auto">
-        <div className="flex items-center gap-3 mb-8">
-          <Map className="w-8 h-8 text-blue-500" />
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
-            DepthWizard
-          </h1>
+    <div style={{
+      height: '100vh',
+      width: '100vw',
+      display: 'flex',
+      overflow: 'hidden',
+      background: 'var(--bg-primary)',
+      color: 'var(--text-primary)',
+      fontFamily: "'Inter', sans-serif"
+    }}>
+      <ToastContainer />
+
+      {/* Sidebar */}
+      <div style={{
+        width: '320px',
+        background: 'var(--bg-secondary)',
+        borderRight: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        flexShrink: 0
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '20px 24px',
+          borderBottom: '1px solid var(--border-light)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
+        }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '10px',
+            background: 'var(--accent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            boxShadow: '0 2px 8px rgba(59, 91, 219, 0.3)'
+          }}>
+            <Map size={20} />
+          </div>
+          <div>
+            <h1 style={{ fontSize: '18px', fontWeight: 700, margin: 0, letterSpacing: '-0.3px' }}>DepthWizard</h1>
+            <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', margin: 0 }}>3D City Reconstruction</p>
+          </div>
         </div>
 
-        <div className="flex flex-col gap-4 mb-6">
-          <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">Source Image (Required)</label>
-              <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'image')} className="text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-900/30 file:text-blue-400 hover:file:bg-blue-900/50" />
+        {/* Scrollable content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+          {/* Step Indicators */}
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '20px', gap: '0' }}>
+            <div className={`step-dot ${currentStep >= 1 ? (currentStep > 1 ? 'complete' : 'active') : ''}`}>1</div>
+            <div className={`step-line ${currentStep >= 2 ? 'complete' : ''}`} />
+            <div className={`step-dot ${currentStep >= 2 ? (currentStep > 2 ? 'complete' : 'active') : ''}`}>2</div>
+            <div className={`step-line ${currentStep >= 3 ? 'complete' : ''}`} />
+            <div className={`step-dot ${currentStep >= 3 ? 'complete' : ''}`}>3</div>
           </div>
-          <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">Class Map (Required for LoD1)</label>
-              <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'class')} className="text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-zinc-800 file:text-zinc-300 hover:file:bg-zinc-700" />
-          </div>
-          <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">True Heightmap (Optional)</label>
-              <input type="file" accept="image/*" onChange={(e) => handleFileUpload(e, 'groundTruth')} className="text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-zinc-800 file:text-zinc-300 hover:file:bg-zinc-700" />
-          </div>
-        </div>
 
-        {originalFile && (
-          <button 
-            onClick={generateDepth}
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center gap-2 mb-6"
-          >
-            {loading ? (
-              <><Activity className="w-5 h-5 animate-spin" /> Vectorizing...</>
-            ) : (
-              'Generate LoD1 City'
-            )}
-          </button>
-        )}
+          {/* Step labels */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', fontSize: '11px', color: 'var(--text-tertiary)' }}>
+            <span>Upload</span>
+            <span>Configure</span>
+            <span>Generate</span>
+          </div>
 
-        {rawDepth && (
-          <div className="flex flex-col gap-6">
-            <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800">
-              <label className="flex items-center justify-between text-sm font-medium text-zinc-400 mb-4">
-                <span>Height Scale</span>
-                <span className="text-blue-400 font-mono">{scale}</span>
-              </label>
-              <input 
-                type="range" 
-                min="10" 
-                max="500" 
-                value={scale} 
-                onChange={(e) => setScale(Number(e.target.value))}
-                className="w-full accent-blue-500 cursor-ew-resize"
+          {/* Upload Section */}
+          <div style={{ marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+              Input Data
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <UploadZone
+                label="Source Image"
+                description="RGB satellite / aerial image"
+                required
+                file={originalFile}
+                onFileSelect={setOriginalFile}
+              />
+              <UploadZone
+                label="Class Map"
+                description="Semantic segmentation map"
+                required
+                file={classMapFile}
+                onFileSelect={setClassMapFile}
+              />
+              <UploadZone
+                label="Height Map"
+                description="Ground truth AGL (optional)"
+                file={groundTruthFile}
+                onFileSelect={setGroundTruthFile}
               />
             </div>
-
-            <button 
-                onClick={() => setIsFlythrough(!isFlythrough)}
-                className={`w-full py-3 rounded-xl font-medium transition-all flex items-center justify-center gap-2 ${isFlythrough ? 'bg-red-900/40 text-red-400 border border-red-500/50 hover:bg-red-900/60' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
-            >
-                {isFlythrough ? <><Square className="w-4 h-4"/> Stop Flythrough</> : <><Play className="w-4 h-4"/> Cinematic Flythrough</>}
-            </button>
           </div>
-        )}
+
+          {/* Generate Button */}
+          {originalFile && (
+            <div style={{ marginBottom: '20px' }}>
+              <button
+                onClick={generateDepth}
+                disabled={loading}
+                className="btn-primary"
+              >
+                {loading ? (
+                  <><Activity size={16} style={{ animation: 'spin 1s linear infinite' }} /> {loadingStep}</>
+                ) : (
+                  'Generate LoD1 City'
+                )}
+              </button>
+
+              {/* Progress bar */}
+              {loading && (
+                <div className="progress-bar" style={{ marginTop: '8px' }}>
+                  <div className="progress-fill" style={{
+                    width: loadingStep.includes('Upload') ? '25%' :
+                           loadingStep.includes('AI') ? '50%' :
+                           loadingStep.includes('Parsing') ? '75%' :
+                           loadingStep.includes('Building') ? '95%' : '10%'
+                  }} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Controls (visible after generation) */}
+          {rawDepth && (
+            <>
+              <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '16px', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+                  Controls
+                </h3>
+
+                {/* Height Scale */}
+                <div className="stat-card" style={{ marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 500 }}>Height Scale</span>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--accent)', fontFamily: 'monospace' }}>{scale}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="500"
+                    value={scale}
+                    onChange={(e) => setScale(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'ew-resize' }}
+                  />
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button
+                    onClick={() => setIsFlythrough(!isFlythrough)}
+                    className={`btn-secondary ${isFlythrough ? 'active' : ''}`}
+                  >
+                    {isFlythrough ? <><Square size={14} /> Stop Flythrough</> : <><Play size={14} /> Cinematic Flythrough</>}
+                  </button>
+                  <button onClick={handleReset} className="btn-secondary">
+                    <RotateCcw size={14} /> Reset All
+                  </button>
+                </div>
+              </div>
+
+              {/* Statistics Dashboard */}
+              {stats && (
+                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: '16px' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+                    Detection Results
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div className="stat-card animate-count">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <Building2 size={14} style={{ color: 'var(--accent)' }} />
+                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Buildings</span>
+                      </div>
+                      <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {stats.buildingCount}
+                      </div>
+                    </div>
+                    <div className="stat-card animate-count" style={{ animationDelay: '0.1s' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <TreePine size={14} style={{ color: 'var(--success)' }} />
+                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Trees</span>
+                      </div>
+                      <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {stats.treeCount}
+                      </div>
+                    </div>
+                    <div className="stat-card animate-count" style={{ animationDelay: '0.2s' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <ArrowUpDown size={14} style={{ color: '#e67700' }} />
+                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Max Height</span>
+                      </div>
+                      <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {stats.maxHeight}<span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 400 }}>m</span>
+                      </div>
+                    </div>
+                    <div className="stat-card animate-count" style={{ animationDelay: '0.25s' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <Layers size={14} style={{ color: '#ae3ec9' }} />
+                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>Avg Height</span>
+                      </div>
+                      <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {stats.avgHeight}<span style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 400 }}>m</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="stat-card animate-count" style={{ marginTop: '8px', animationDelay: '0.4s' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginBottom: '2px' }}>Total Objects Detected</div>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--accent)' }}>
+                      {stats.totalObjects}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          padding: '12px 24px',
+          borderTop: '1px solid var(--border-light)',
+          fontSize: '11px',
+          color: 'var(--text-tertiary)',
+          textAlign: 'center'
+        }}>
+          SIH 2026 • DepthWizard v1.0
+        </div>
       </div>
 
-      <div className="flex-1 relative bg-zinc-950">
+      {/* Main Viewport */}
+      <div style={{ flex: 1, position: 'relative', background: 'var(--bg-primary)' }}>
         {rawDepth ? (
-          <div className="absolute inset-0">
+          <div style={{ position: 'absolute', inset: 0 }}>
             <ErrorBoundary>
               <ThreeScene 
                   originalImage={originalFile ? URL.createObjectURL(originalFile) : null} 
@@ -144,23 +344,65 @@ function App() {
                   lod1Objects={lod1Objects}
                   displacementScale={scale} 
                   isFlythrough={isFlythrough}
+                  showGrid={showGrid}
               />
             </ErrorBoundary>
-            <div className="absolute top-6 right-6 bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 flex items-center gap-2 shadow-xl z-10">
-               <Maximize className="w-4 h-4 text-zinc-400" />
-               <span className="text-sm text-zinc-300">Left Click: Orbit • Right Click: Pan • Scroll: Zoom</span>
+
+            {/* HUD overlay */}
+            <div style={{
+              position: 'absolute',
+              top: '16px',
+              right: '16px',
+              background: 'rgba(255,255,255,0.85)',
+              backdropFilter: 'blur(12px)',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: '1px solid var(--border-light)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: 'var(--shadow-sm)',
+              zIndex: 10
+            }}>
+               <Maximize size={14} style={{ color: 'var(--text-tertiary)' }} />
+               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Left Click: Orbit • Right Click: Pan • Scroll: Zoom</span>
             </div>
             
-            <div className="absolute bottom-6 right-6 px-4 py-2 bg-zinc-900 border-2 border-zinc-800 rounded-xl shadow-2xl flex items-center gap-2">
-               <span className="text-xs font-mono text-zinc-400 uppercase">
-                   {lod1Objects ? 'LoD1 Vector Mode Active' : 'Displacement Mode Active'}
+            {/* Mode badge */}
+            <div style={{
+              position: 'absolute',
+              bottom: '16px',
+              right: '16px',
+              padding: '6px 14px',
+              background: 'rgba(255,255,255,0.9)',
+              border: '1px solid var(--border-light)',
+              borderRadius: '8px',
+              boxShadow: 'var(--shadow-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              zIndex: 10
+            }}>
+               <Eye size={14} style={{ color: 'var(--accent)' }} />
+               <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                   {lod1Objects ? 'LoD1 Vector Mode' : 'Displacement Mode'}
                </span>
             </div>
           </div>
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-zinc-600 flex-col gap-4">
-             <Layers className="w-24 h-24 text-zinc-800" />
-             <p className="text-xl font-medium">Upload source image and class map to begin.</p>
+          <div style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: '12px',
+            color: 'var(--text-tertiary)'
+          }}>
+             <Layers size={64} style={{ color: 'var(--border)' }} />
+             <p style={{ fontSize: '16px', fontWeight: 500, color: 'var(--text-secondary)' }}>Upload source image and class map to begin.</p>
+             <p style={{ fontSize: '13px' }}>Supported formats: PNG, JPG, TIFF</p>
           </div>
         )}
       </div>
