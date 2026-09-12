@@ -12,6 +12,105 @@ CLASS_MAP = {
     180: "building",     # ~32%, median height 9-19m
 }
 
+HEIGHT_BIN_SIZE = 15  # Quantize 0-255 heights into bins of this size
+
+def _contour_to_object(cnt, obj_type, cls, class_img_arr, height_img_arr):
+    """Convert a single contour into an object dict with points, height, centroid."""
+    area = cv2.contourArea(cnt)
+    if area < 50:
+        return None
+        
+    epsilon = 0.01 * cv2.arcLength(cnt, True)
+    approx = cv2.approxPolyDP(cnt, epsilon, True)
+    
+    if len(approx) < 3:
+        return None
+    
+    points = []
+    for p in approx:
+        x = p[0][0] / class_img_arr.shape[1] - 0.5
+        y = p[0][1] / class_img_arr.shape[0] - 0.5
+        points.append([float(x), float(-y)])
+        
+    cnt_mask = np.zeros_like(height_img_arr, dtype=np.uint8)
+    cv2.drawContours(cnt_mask, [cnt], -1, 255, -1)
+    
+    heights_inside = height_img_arr[cnt_mask == 255]
+    if len(heights_inside) == 0:
+        return None
+        
+    median_height = np.median(heights_inside)
+    
+    M = cv2.moments(cnt)
+    if M['m00'] != 0:
+        cx = int(M['m10'] / M['m00'])
+        cy = int(M['m01'] / M['m00'])
+    else:
+        cx, cy = approx[0][0][0], approx[0][0][1]
+        
+    return {
+        "type": obj_type,
+        "points": points,
+        "height": float(median_height),
+        "class": int(cls),
+        "contour": cnt,
+        "centroid": (cx, cy)
+    }
+
+
+def _split_building_by_height(cnt, cls, class_img_arr, height_img_arr):
+    """
+    Split a single building contour into sub-buildings based on height variation.
+    Uses height-bin quantization + connected components to separate regions
+    of different heights within the same contour.
+    """
+    # Create mask for this contour
+    cnt_mask = np.zeros_like(height_img_arr, dtype=np.uint8)
+    cv2.drawContours(cnt_mask, [cnt], -1, 255, -1)
+    
+    # Get height values inside contour
+    heights_inside = height_img_arr[cnt_mask == 255]
+    if len(heights_inside) == 0:
+        return []
+    
+    # Check if splitting is needed: if height range is small, keep as one object
+    h_min, h_max = heights_inside.min(), heights_inside.max()
+    if (h_max - h_min) < HEIGHT_BIN_SIZE:
+        obj = _contour_to_object(cnt, "building", cls, class_img_arr, height_img_arr)
+        return [obj] if obj else []
+    
+    # Quantize heights into bins
+    masked_heights = np.where(cnt_mask == 255, height_img_arr, 0).astype(np.float32)
+    quantized = (masked_heights / HEIGHT_BIN_SIZE).astype(np.int32)
+    
+    sub_objects = []
+    unique_bins = np.unique(quantized[cnt_mask == 255])
+    
+    for bin_val in unique_bins:
+        # Create mask for this height bin within the contour
+        bin_mask = ((quantized == bin_val) & (cnt_mask == 255)).astype(np.uint8) * 255
+        
+        # Apply morphological opening to clean up noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        bin_mask = cv2.morphologyEx(bin_mask, cv2.MORPH_OPEN, kernel)
+        
+        # Find connected components in this height bin
+        num_labels, labels = cv2.connectedComponents(bin_mask)
+        
+        for label_id in range(1, num_labels):  # skip background (0)
+            component_mask = (labels == label_id).astype(np.uint8) * 255
+            
+            # Find contours of this component
+            sub_contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for sub_cnt in sub_contours:
+                obj = _contour_to_object(sub_cnt, "building", cls, class_img_arr, height_img_arr)
+                if obj:
+                    sub_objects.append(obj)
+    
+    return sub_objects if sub_objects else []
+
+
 def extract_features(class_img_arr, height_img_arr):
     if class_img_arr.shape != height_img_arr.shape:
         class_img_arr = cv2.resize(class_img_arr, (height_img_arr.shape[1], height_img_arr.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -33,38 +132,16 @@ def extract_features(class_img_arr, height_img_arr):
             area = cv2.contourArea(cnt)
             if area < 50:
                 continue
-                
-            points = []
-            epsilon = 0.01 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            for p in approx:
-                x = p[0][0] / class_img_arr.shape[1] - 0.5
-                y = p[0][1] / class_img_arr.shape[0] - 0.5
-                points.append([float(x), float(-y)])
-                
-            cnt_mask = np.zeros_like(height_img_arr, dtype=np.uint8)
-            cv2.drawContours(cnt_mask, [cnt], -1, 255, -1)
             
-            heights_inside = height_img_arr[cnt_mask == 255]
-            if len(heights_inside) > 0:
-                median_height = np.median(heights_inside)
-                    
-                # calculate centroid for overlap testing
-                M = cv2.moments(cnt)
-                if M['m00'] != 0:
-                    cx = int(M['m10']/M['m00'])
-                    cy = int(M['m01']/M['m00'])
-                else:
-                    cx, cy = approx[0][0][0], approx[0][0][1]
-                    
-                raw_objects.append({
-                    "type": obj_type,
-                    "points": points,
-                    "height": float(median_height),
-                    "class": int(cls),
-                    "contour": cnt,
-                    "centroid": (cx, cy)
-                })
+            if obj_type == "building":
+                # Split buildings by height variation
+                sub_buildings = _split_building_by_height(cnt, cls, class_img_arr, height_img_arr)
+                raw_objects.extend(sub_buildings)
+            else:
+                # Non-building objects (trees etc.) — keep original logic
+                obj = _contour_to_object(cnt, obj_type, cls, class_img_arr, height_img_arr)
+                if obj:
+                    raw_objects.append(obj)
                 
     # Filter overlapping objects (remove trees inside buildings)
     buildings = [obj for obj in raw_objects if obj['type'] == 'building']

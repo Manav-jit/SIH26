@@ -8,9 +8,9 @@ class DepthEstimator:
     def __init__(self):
         # Use GPU if available
         self.device = 0 if torch.cuda.is_available() else -1
-        # depth-anything-small-hf is very fast and has excellent structural boundaries
+        # depth-anything-base-hf has better structural boundaries than small, uses ~400MB VRAM
         print(f"Loading model on device: {'GPU' if self.device == 0 else 'CPU'}")
-        self.pipe = pipeline(task="depth-estimation", model="LiheYoung/depth-anything-small-hf", device=self.device)
+        self.pipe = pipeline(task="depth-estimation", model="LiheYoung/depth-anything-base-hf", device=self.device)
         print("Model loaded.")
 
     def estimate_depth(self, image: Image.Image) -> bytes:
