@@ -142,9 +142,49 @@ const TerrainLoD1 = ({ originalImage, lod1Objects, displacementScale, showGrid }
     const roadTexture = useRoadTexture();
 
     // ── Buildings ──
-    const buildingMeshes = useMemo(() => {
-        if (!lod1Objects) return [];
-        return lod1Objects.filter(obj => obj.type === 'building').map((obj, i) => {
+    const buildingData = useMemo(() => {
+        if (!lod1Objects) return { meshes: [], heightRange: [0, 1] };
+        const buildings = lod1Objects.filter(obj => obj.type === 'building');
+        if (buildings.length === 0) return { meshes: [], heightRange: [0, 1] };
+        
+        const heights = buildings.map(b => b.height);
+        const minH = Math.min(...heights);
+        const maxH = Math.max(...heights);
+        const range = maxH - minH || 1;
+        
+        // Height-based color palette (cool → warm)
+        const colorStops = [
+            { t: 0.0, color: new THREE.Color('#7ea8c4') },  // Cool steel blue (short)
+            { t: 0.2, color: new THREE.Color('#9db8c8') },  // Light blue-gray
+            { t: 0.4, color: new THREE.Color('#c5c8c6') },  // Neutral gray
+            { t: 0.6, color: new THREE.Color('#d4b896') },  // Warm sand
+            { t: 0.8, color: new THREE.Color('#c99a6b') },  // Warm amber
+            { t: 1.0, color: new THREE.Color('#bf7845') },  // Deep warm orange
+        ];
+        
+        const getHeightColor = (height) => {
+            const t = Math.max(0, Math.min(1, (height - minH) / range));
+            // Find the two stops to interpolate between
+            let lower = colorStops[0], upper = colorStops[colorStops.length - 1];
+            for (let i = 0; i < colorStops.length - 1; i++) {
+                if (t >= colorStops[i].t && t <= colorStops[i + 1].t) {
+                    lower = colorStops[i];
+                    upper = colorStops[i + 1];
+                    break;
+                }
+            }
+            const localT = (t - lower.t) / (upper.t - lower.t || 1);
+            const color = new THREE.Color().copy(lower.color).lerp(upper.color, localT);
+            return color;
+        };
+        
+        // Roof colors are slightly darker versions of wall colors
+        const getRoofColor = (height) => {
+            const base = getHeightColor(height);
+            return base.clone().multiplyScalar(0.55);
+        };
+        
+        const meshes = buildings.map((obj, i) => {
             const shape = createShape(obj.points);
             if (!shape) return null;
             const height = (obj.height / 255.0) * displacementScale;
@@ -156,11 +196,14 @@ const TerrainLoD1 = ({ originalImage, lod1Objects, displacementScale, showGrid }
                 return null;
             }
             
+            const wallColor = getHeightColor(obj.height);
+            const roofColor = getRoofColor(obj.height);
+            
             return (
                 <group key={`b-${i}`} rotation={[-Math.PI / 2, 0, 0]}>
                     <mesh geometry={geom} castShadow receiveShadow>
-                        <meshStandardMaterial attach="material-0" color="#5c6370" roughness={0.95} metalness={0.05} />
-                        <meshStandardMaterial attach="material-1" color="#c8cdd6" roughness={0.4} metalness={0.1} map={windowTexture} emissiveMap={windowTexture} emissive="#fff8e1" emissiveIntensity={0.15} />
+                        <meshStandardMaterial attach="material-0" color={roofColor} roughness={0.85} metalness={0.05} />
+                        <meshStandardMaterial attach="material-1" color={wallColor} roughness={0.4} metalness={0.1} map={windowTexture} emissiveMap={windowTexture} emissive="#fff8e1" emissiveIntensity={0.15} />
                     </mesh>
                     <mesh geometry={geom}>
                         <meshBasicMaterial color="#3b5bdb" wireframe={true} transparent opacity={0.04} />
@@ -168,6 +211,8 @@ const TerrainLoD1 = ({ originalImage, lod1Objects, displacementScale, showGrid }
                 </group>
             );
         });
+        
+        return { meshes, heightRange: [minH, maxH] };
     }, [lod1Objects, displacementScale, windowTexture]);
 
     // ── Trees ──
@@ -225,7 +270,7 @@ const TerrainLoD1 = ({ originalImage, lod1Objects, displacementScale, showGrid }
             )}
             
             {/* Render order: ground features first, then elevated objects */}
-            {buildingMeshes}
+            {buildingData.meshes}
             {treeMeshes}
         </group>
     );

@@ -388,6 +388,37 @@ function App() {
                    {lod1Objects ? 'LoD1 Vector Mode' : 'Displacement Mode'}
                </span>
             </div>
+
+            {/* Height color legend */}
+            {lod1Objects && (
+              <div style={{
+                position: 'absolute',
+                bottom: '16px',
+                left: '16px',
+                background: 'rgba(255,255,255,0.9)',
+                backdropFilter: 'blur(12px)',
+                border: '1px solid var(--border-light)',
+                borderRadius: '10px',
+                padding: '10px 14px',
+                boxShadow: 'var(--shadow-sm)',
+                zIndex: 10,
+                minWidth: '180px'
+              }}>
+                <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
+                  Building Height
+                </div>
+                <div style={{
+                  height: '10px',
+                  borderRadius: '5px',
+                  background: 'linear-gradient(to right, #7ea8c4, #9db8c8, #c5c8c6, #d4b896, #c99a6b, #bf7845)',
+                  marginBottom: '4px'
+                }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-tertiary)', fontWeight: 500 }}>
+                  <span>Low</span>
+                  <span>High</span>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{
