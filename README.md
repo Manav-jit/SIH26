@@ -1,4 +1,4 @@
-# AETHER - 3D Feature Extraction from 2D Aerial Imagery
+# DepthWizard - 3D Feature Extraction from 2D Aerial Imagery
 
 **Smart India Hackathon 2026**
 
