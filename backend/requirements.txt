@@ -6,3 +6,8 @@ torch
 torchvision
 Pillow
 numpy
+rasterio
+SRTM.py
+scipy
+opencv-python-headless
+shapely

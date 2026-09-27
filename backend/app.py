@@ -7,9 +7,10 @@ import uvicorn
 import base64
 import numpy as np
 from depth_model import get_estimator
+from segmentation_model import get_seg_estimator
 from vectorizer import extract_features
 
-app = FastAPI(title="DepthWizard API")
+app = FastAPI(title="AETHER API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,7 +26,7 @@ async def startup_event():
 
 @app.get("/")
 def read_root():
-    return {"message": "DepthWizard API is running."}
+    return {"message": "AETHER API is running."}
 
 @app.post("/predict")
 async def predict(
@@ -48,27 +49,33 @@ async def predict(
             "raw_depth": f"data:image/png;base64,{raw_b64}"
         }
         
-        # 2. Vectorize LoD1 if class_map provided
+        # 2. Vectorize LoD1 if class_map provided OR generate one dynamically
         if class_map:
             class_contents = await class_map.read()
             if class_contents and len(class_contents) > 0:
                 class_img = Image.open(io.BytesIO(class_contents)).convert("L")
-                
-                # Determine which height map to use for extrusion
-                if ground_truth:
-                    gt_contents = await ground_truth.read()
-                    if gt_contents and len(gt_contents) > 0:
-                        depth_img = Image.open(io.BytesIO(gt_contents)).convert("L")
-                    else:
-                        depth_img = Image.open(io.BytesIO(raw_depth_bytes)).convert("L")
+                class_arr = np.array(class_img)
+            else:
+                class_arr = None
+        else:
+            seg_estimator = get_seg_estimator()
+            class_arr = seg_estimator.segment_image(pil_image)
+            
+        if class_arr is not None:
+            # Determine which height map to use for extrusion
+            if ground_truth:
+                gt_contents = await ground_truth.read()
+                if gt_contents and len(gt_contents) > 0:
+                    depth_img = Image.open(io.BytesIO(gt_contents)).convert("L")
                 else:
                     depth_img = Image.open(io.BytesIO(raw_depth_bytes)).convert("L")
-                
-                depth_arr = np.array(depth_img)
-                class_arr = np.array(class_img)
-                
-                lod1_objects = extract_features(class_arr, depth_arr)
-                response_data["lod1_objects"] = lod1_objects
+            else:
+                depth_img = Image.open(io.BytesIO(raw_depth_bytes)).convert("L")
+            
+            depth_arr = np.array(depth_img)
+            
+            lod1_objects = extract_features(class_arr, depth_arr)
+            response_data["lod1_objects"] = lod1_objects
             
         return JSONResponse(content=response_data)
     except Exception as e:
